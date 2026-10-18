@@ -114,7 +114,8 @@ To mimic production: `.venv/bin/gunicorn backend.wsgi:app --bind 127.0.0.1:4999 
 | `SUPABASE_URL` | `https://<ref>.supabase.co` (no trailing slash) |
 | `SUPABASE_JWT_ISSUER` | `<SUPABASE_URL>/auth/v1` (the token's `iss`, **not** the JWKS URL) |
 | `DATABASE_URL` | Supabase **Session pooler** string (the direct host is IPv6-only) |
-| `ACCESSFLOW_OPENROUTER_API_KEY` | OpenRouter key (named to avoid clashing with a shell `OPENROUTER_API_KEY`) |
+| `GEMINI_API_KEY` | Google AI Studio key. When set, LLM calls go to Gemini directly and this wins over OpenRouter |
+| `ACCESSFLOW_OPENROUTER_API_KEY` | OpenRouter key, used only when `GEMINI_API_KEY` is unset (named to avoid clashing with a shell `OPENROUTER_API_KEY`) |
 | `LLM_MODEL_EDGES`, `LLM_MODEL_SUMMARY` | OpenRouter model slugs, default `google/gemini-3.1-flash-lite` |
 | `GOOGLE_CREDENTIALS` | Optional service-account JSON (one line) for hosts without ADC |
 | `CORS_ORIGINS` | Comma-separated extra allowed origins, e.g. the Vercel URL |
@@ -161,8 +162,8 @@ make migration-status                # current revision + drift check
 
 ## Deploy to Cloud Run (us-west1, scale to zero)
 
-Run `make migrate` against the production `DATABASE_URL` first. One-time setup: enable Secret Manager, put `DATABASE_URL` and
-`ACCESSFLOW_OPENROUTER_API_KEY` in it, and let the service account read them
+Run `make migrate` against the production `DATABASE_URL` first. One-time setup: enable Secret Manager, put `DATABASE_URL`,
+`GEMINI_API_KEY` and (optionally, as a fallback) `ACCESSFLOW_OPENROUTER_API_KEY` in it, and let the service account read them
 (Secret Manager Secret Accessor on each secret).
 
 The current deployment is project `accessflow-496218`.
@@ -174,8 +175,12 @@ gcloud run deploy accessflow-backend \
   --memory 4Gi --cpu 2 --timeout 600 --concurrency 4 \
   --min-instances 0 --max-instances 3 --allow-unauthenticated \
   --set-env-vars SUPABASE_URL=...,SUPABASE_JWT_ISSUER=...,CORS_ORIGINS=https://<frontend>.vercel.app \
-  --set-secrets DATABASE_URL=DATABASE_URL:latest,ACCESSFLOW_OPENROUTER_API_KEY=ACCESSFLOW_OPENROUTER_API_KEY:latest
+  --set-secrets DATABASE_URL=DATABASE_URL:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,ACCESSFLOW_OPENROUTER_API_KEY=ACCESSFLOW_OPENROUTER_API_KEY:latest
 ```
+
+If `GEMINI_API_KEY` is not attached, the backend silently uses OpenRouter instead.
+A bad OpenRouter key then fails every upload job with
+`401 User not found`.
 
 The container sets `RUN_JOBS_INLINE=1` by default. Cold starts load torch and
 take tens of seconds. Then set `VITE_API_URL` to the service URL in the
@@ -193,7 +198,8 @@ existing build keeps calling the old URL).
     --format="yaml(spec.template.spec.containers[0].env)" | grep -E "name:"
   ```
 
-  `DATABASE_URL` and `ACCESSFLOW_OPENROUTER_API_KEY` should be there. Attach a
+  `DATABASE_URL` and `GEMINI_API_KEY` should be there (plus
+  `ACCESSFLOW_OPENROUTER_API_KEY` if you keep the fallback). Attach a
   missing one with `gcloud run services update ... --update-secrets NAME=NAME:latest`.
 - **Check CORS from each origin the frontend uses:**
 

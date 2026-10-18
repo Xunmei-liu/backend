@@ -28,13 +28,18 @@ MODEL_SUMMARY = os.environ.get("LLM_MODEL_SUMMARY") or DEFAULT_MODEL
 _client: Optional[OpenAI] = None
 
 
+def _env_key(name: str) -> str:
+    """Read a key, dropping whitespace/quotes that sneak in via secret managers."""
+    return os.environ.get(name, "").strip().strip("\"'").strip()
+
+
 def using_gemini() -> bool:
-    return bool(os.environ.get("GEMINI_API_KEY"))
+    return bool(_env_key("GEMINI_API_KEY"))
 
 
 def is_configured() -> bool:
     """True when a key for either provider is set."""
-    return using_gemini() or bool(os.environ.get("ACCESSFLOW_OPENROUTER_API_KEY"))
+    return using_gemini() or bool(_env_key("ACCESSFLOW_OPENROUTER_API_KEY"))
 
 
 def _model_name(model: str) -> str:
@@ -48,9 +53,9 @@ def get_client() -> OpenAI:
     global _client
     if _client is None:
         if using_gemini():
-            _client = OpenAI(base_url=GEMINI_BASE_URL, api_key=os.environ["GEMINI_API_KEY"])
+            _client = OpenAI(base_url=GEMINI_BASE_URL, api_key=_env_key("GEMINI_API_KEY"))
         else:
-            api_key = os.environ.get("ACCESSFLOW_OPENROUTER_API_KEY")
+            api_key = _env_key("ACCESSFLOW_OPENROUTER_API_KEY")
             if not api_key:
                 raise RuntimeError(
                     "Set GEMINI_API_KEY or ACCESSFLOW_OPENROUTER_API_KEY to use the AI model."
@@ -98,6 +103,8 @@ def complete(
             return (resp.choices[0].message.content or "").strip()
         except Exception as e:  # network / rate limit / provider errors
             last_err = e
+            cause = repr(e.__cause__) if e.__cause__ else ""
+            print(f"LLM attempt {attempt}/{retries} via {'gemini' if using_gemini() else 'openrouter'} failed: {e} {cause}", flush=True)
             if attempt < retries:
                 time.sleep(retry_delay * attempt)
-    raise RuntimeError(f"LLM call failed after {retries} attempts: {str(last_err)[:500]}")
+    raise RuntimeError(f"LLM call failed after {retries} attempts: {str(last_err)[:300]} {repr(last_err.__cause__)[:200] if last_err and last_err.__cause__ else ''}".strip())
